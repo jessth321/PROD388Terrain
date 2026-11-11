@@ -1,0 +1,38 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel HeightGen
+#include "noiseSimplex.cginc"
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWStructuredBuffer<float> floorValues;
+RWStructuredBuffer<float> ceilingValues;
+//RWStructuredBuffer<float> minMaxHeight;
+
+int chunkSize;
+float2 chunkOffset;
+float2 seedOffsetFloor;
+float2 seedOffsetCeiling;
+float freqFloor;
+float freqCeiling;
+
+float floorVariance;
+float ceilingVariance;
+
+[numthreads(8,8,1)]
+void HeightGen (uint2 id : SV_DispatchThreadID)
+{
+    float floor = (snoise((float2(id.x, id.y) + chunkOffset + seedOffsetFloor) * freqFloor) + 1) * 0.5 * floorVariance + 10;
+    float ceiling = floor + (snoise((float2(id.x, id.y) + chunkOffset + seedOffsetCeiling) * freqCeiling) + 1) * 0.5 * ceilingVariance;
+    
+    //if (floor < minMaxHeight[0])
+    //{
+    //    minMaxHeight[0] = floor;
+    //}
+    //if (ceiling > minMaxHeight[1])
+    //{
+    //    minMaxHeight[1] = ceiling;
+    //}
+    
+    floorValues[id.x + id.y * chunkSize] = floor;
+    ceilingValues[id.x + id.y * chunkSize] = ceiling;
+}

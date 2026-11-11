@@ -1,0 +1,149 @@
+#pragma kernel CSMain
+
+#include "/MarchingCubeTables.compute"
+//#include "/Noise.compute"
+
+struct Vertex
+{
+    float3 position;
+    float terrainType;
+};
+
+struct Triangle {
+    Vertex vertexA;
+    Vertex vertexB;
+    Vertex vertexC;
+};
+
+struct PointData
+{
+    float density;
+    float terrainType;
+};
+
+AppendStructuredBuffer<Triangle> triangles;
+RWStructuredBuffer<PointData> points;
+
+RWStructuredBuffer<Triangle> meshTriangles;
+
+//float3 chunkOffset;
+//int3 seedOffset;
+int chunkSize;
+float isoLevel;
+
+float3 interpolateVertex(float4 v1, float4 v2)
+{
+    float t = (isoLevel - v1.w) / (v2.w - v1.w);
+    return v1.xyz + t * (v2.xyz - v1.xyz);
+}
+
+Vertex createVertex(float4 v1, float4 v2, float tt1, float tt2)
+{
+    float t = (isoLevel - v1.w) / (v2.w - v1.w);
+    Vertex vert;
+    vert.position = v1.xyz + t * (v2.xyz - v1.xyz);
+    vert.terrainType = tt1 + t * (tt2 - tt1);
+	
+    return vert;
+}
+
+
+
+int indexFromCoord(int x, int y, int z)
+{
+    return x + y * chunkSize + z * chunkSize * chunkSize;
+}
+
+int indexFromCoord(int3 coord)
+{
+    return coord.x + coord.y * chunkSize + coord.z * chunkSize * chunkSize;
+}
+
+
+
+[numthreads(8,8,8)]
+void CSMain(int3 id : SV_DispatchThreadID)
+{
+	
+	if (id.x == chunkSize - 1 || id.y == chunkSize - 1 || id.z == chunkSize - 1)
+	{
+		return;
+	}
+	
+	
+    float4 cubeCornerPoints[8] =
+    {
+        float4(id.x, id.y, id.z, points[indexFromCoord(id.x, id.y, id.z)].density),
+		float4(id.x + 1, id.y, id.z, points[indexFromCoord(id.x + 1, id.y, id.z)].density),
+		float4(id.x + 1, id.y, id.z + 1, points[indexFromCoord(id.x + 1, id.y, id.z + 1)].density),
+		float4(id.x, id.y, id.z + 1, points[indexFromCoord(id.x, id.y, id.z + 1)].density),
+		float4(id.x, id.y + 1, id.z, points[indexFromCoord(id.x, id.y + 1, id.z)].density),
+		float4(id.x + 1, id.y + 1, id.z, points[indexFromCoord(id.x + 1, id.y + 1, id.z)].density),
+		float4(id.x + 1, id.y + 1, id.z + 1, points[indexFromCoord(id.x + 1, id.y + 1, id.z + 1)].density),
+		float4(id.x, id.y + 1, id.z + 1, points[indexFromCoord(id.x, id.y + 1, id.z + 1)].density)
+    };
+	
+    float cubeCornerTypes[8] =
+    {
+        float(points[indexFromCoord(id.x, id.y, id.z)].terrainType),
+		float(points[indexFromCoord(id.x + 1, id.y, id.z)].terrainType),
+		float(points[indexFromCoord(id.x + 1, id.y, id.z + 1)].terrainType),
+		float(points[indexFromCoord(id.x, id.y, id.z + 1)].terrainType),
+		float(points[indexFromCoord(id.x, id.y + 1, id.z)].terrainType),
+		float(points[indexFromCoord(id.x + 1, id.y + 1, id.z)].terrainType),
+		float(points[indexFromCoord(id.x + 1, id.y + 1, id.z + 1)].terrainType),
+		float(points[indexFromCoord(id.x, id.y + 1, id.z + 1)].terrainType)
+    };
+	
+	int cubeConfigIndex = 0;
+	if (cubeCornerPoints[0].w < isoLevel)cubeConfigIndex |= 1;
+	if (cubeCornerPoints[1].w < isoLevel)cubeConfigIndex |= 2;
+	if (cubeCornerPoints[2].w < isoLevel)cubeConfigIndex |= 4;
+	if (cubeCornerPoints[3].w < isoLevel)cubeConfigIndex |= 8;
+	if (cubeCornerPoints[4].w < isoLevel)cubeConfigIndex |= 16;
+	if (cubeCornerPoints[5].w < isoLevel)cubeConfigIndex |= 32;
+	if (cubeCornerPoints[6].w < isoLevel)cubeConfigIndex |= 64;
+	if (cubeCornerPoints[7].w < isoLevel)cubeConfigIndex |= 128;
+
+
+	for (int i = 0; triangulationTable[cubeConfigIndex][i] != -1; i += 3)
+	{
+
+		int a0 = cornerIndexAFromEdge[triangulationTable[cubeConfigIndex][i]];
+		int b0 = cornerIndexBFromEdge[triangulationTable[cubeConfigIndex][i]];
+
+		int a1 = cornerIndexAFromEdge[triangulationTable[cubeConfigIndex][i + 1]];
+		int b1 = cornerIndexBFromEdge[triangulationTable[cubeConfigIndex][i + 1]];
+
+		int a2 = cornerIndexAFromEdge[triangulationTable[cubeConfigIndex][i + 2]];
+		int b2 = cornerIndexBFromEdge[triangulationTable[cubeConfigIndex][i + 2]];
+	   
+	   
+        Triangle tri;
+        //Vertex vertA;
+        //vertA.position = interpolateVertex(cubeCornerPoints[a0], cubeCornerPoints[b0]);
+        //vertA.normal = float3(0, 1, 0);
+        //vertA.id = int2(min(indexFromCoord(cubeCornerPoints[a0].xyz), indexFromCoord(cubeCornerPoints[b0].xyz)), max(indexFromCoord(cubeCornerPoints[a0].xyz), indexFromCoord(cubeCornerPoints[b0].xyz)));
+		
+        //Vertex vertB;
+        //vertB.position = interpolateVertex(cubeCornerPoints[a1], cubeCornerPoints[b1]);
+        //vertB.normal = float3(0, 1, 0);
+        //vertB.id = int2(min(indexFromCoord(cubeCornerPoints[a1].xyz), indexFromCoord(cubeCornerPoints[b1].xyz)), max(indexFromCoord(cubeCornerPoints[a1].xyz), indexFromCoord(cubeCornerPoints[b1].xyz)));
+		
+        //Vertex vertC;
+        //vertC.position = interpolateVertex(cubeCornerPoints[a2], cubeCornerPoints[b2]);
+        //vertC.normal = float3(0, 1, 0);
+        //vertC.id = int2(min(indexFromCoord(cubeCornerPoints[a2].xyz), indexFromCoord(cubeCornerPoints[b2].xyz)), max(indexFromCoord(cubeCornerPoints[a2].xyz), indexFromCoord(cubeCornerPoints[b2].xyz)));
+		
+		
+        tri.vertexA = createVertex(cubeCornerPoints[a0], cubeCornerPoints[b0], cubeCornerTypes[a0], cubeCornerTypes[b0]);
+        tri.vertexB = createVertex(cubeCornerPoints[a1], cubeCornerPoints[b1], cubeCornerTypes[a1], cubeCornerTypes[b1]);
+        tri.vertexC = createVertex(cubeCornerPoints[a2], cubeCornerPoints[b2], cubeCornerTypes[a2], cubeCornerTypes[b2]);
+		
+        //tri.vertexA.terrainType = interpolateVertex(cubeCornerPoints[a0], cubeCornerPoints[b0]);
+        //tri.vertexB.terrainType = interpolateVertex(cubeCornerPoints[a1], cubeCornerPoints[b1]);
+        //tri.vertexC.terrainType = interpolateVertex(cubeCornerPoints[a2], cubeCornerPoints[b2]);
+		
+		triangles.Append(tri);
+	}
+}

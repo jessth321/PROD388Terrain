@@ -1,0 +1,499 @@
+#pragma kernel NoiseGen
+
+//#include "/Noise.compute"
+#include "noiseSimplex.cginc"
+
+struct Deformation
+{
+    float3 position;
+	float radius;
+    float blend;
+    float noiseFreq;
+    float noiseOct;
+    float noiseAmp;
+    float noiseLac;
+    float noisePers;
+};
+
+struct PointData
+{
+    float density;
+    float terrainType;
+};
+
+RWStructuredBuffer<PointData> points;
+RWStructuredBuffer<uint> sides;
+StructuredBuffer<float3> heightEvaluation;
+StructuredBuffer<Deformation> deformations;
+
+float evaluationLength;
+
+int chunkSize;
+float3 chunkOffset;
+float isoLevel;
+
+float3 seedOffset;
+float2 seedOffsetGround;
+float2 seedOffsetCeiling;
+float2 seedOffsetCont;
+float2 seedOffsetErosion;
+float2 seedOffsetPnV;
+
+float noiseFreq;
+float noiseFreqGround;
+float noiseFreqCeiling;
+float noiseFreqMask;
+
+int octaves;//= 4;
+float lacunarity;//= 1.8715;
+float persistence;//= 0.65;
+float amplitude;//= 1.0;
+
+float contFreq;
+int contOct;
+float contLac;
+float contPers;
+float contAmp;
+
+float erosionFreq;
+int erosionOct;
+float erosionLac;
+float erosionPers;
+float erosionAmp;
+
+float pnvFreq;
+int pnvOct;
+float pnvLac;
+float pnvPers;
+float pnvAmp;
+
+float groundLevel;
+float groundBlend;
+float groundVariance;
+
+float ceiling;
+float ceilingBlend;
+float ceilingVariance;
+
+float noiseMask;
+
+bool isCavernous;
+float terrainType;
+
+
+int indexFromCoord(int x, int y, int z)
+{
+	return x + y * chunkSize + z * chunkSize * chunkSize;
+}
+
+int indexFromCoord(int x, int y)
+{
+	return x + y * chunkSize;
+}
+
+float lerp(float a, float b, float t)
+{
+    return a + t * (b - a);
+}
+
+float smoothstep(float x)
+{
+    x = clamp((x), 0.0f, 1.0f);
+    return x * x * (3 - 2 * x);
+}
+
+PointData heightBlend(float3 pos, float value)
+{
+	float val = value;
+	
+	noiseMask = (snoise((pos.xz + seedOffsetGround + chunkOffset.xz) * noiseFreqMask) + 1) * 0.5;
+	float noiseMaskMidPoint = 0.1;
+	
+	if (noiseMask > noiseMaskMidPoint)
+	{
+		noiseMask += (noiseMask - noiseMaskMidPoint);
+	}
+	else if (noiseMask < noiseMaskMidPoint)
+	{
+		noiseMask -= (noiseMaskMidPoint - noiseMask);
+	}
+	
+	val += noiseMask;
+	
+	//groundVariance = groundVariance * noiseMask;
+	
+	//float baseGroundHeight = (snoise((pos.xz + seedOffsetGround + chunkOffset.xz) * noiseFreqGround) + 1) * 0.5;
+	
+    float baseGroundHeight = 0;
+	
+    float continentalness = 0;
+	
+    float amp = 0.5;
+	
+    for (int j = 0; j < contOct; ++j)
+    {
+        continentalness += (snoise((pos.xz + seedOffsetCont + chunkOffset.xz) * contFreq) + 1) * 0.5 * amp;
+        contFreq *= contLac;
+        amp *= contPers;
+    }
+    
+    //a + t * (b - a);
+	
+    float heightValue = heightEvaluation[floor(continentalness * evaluationLength)].r;
+	
+    baseGroundHeight += heightValue * contAmp;
+	
+    float erosion = 0;
+	
+    amp = 0.5;
+	
+    for (int k = 0; k < erosionOct; ++k)
+    {
+        erosion += (snoise((pos.xz + seedOffsetErosion + chunkOffset.xz) * erosionFreq) + 1) * 0.5 * amp;
+        erosionFreq *= erosionLac;
+        amp *= erosionPers;
+    }
+	
+    heightValue = heightEvaluation[floor(erosion * evaluationLength)].r;
+	
+    val += heightValue * erosionAmp;
+	
+    float pnv = 0;
+	
+    amp = 0.5;
+    for (int l = 0; l < pnvOct; ++l)
+    {
+        pnv += (snoise((pos.xz + seedOffsetPnV + chunkOffset.xz) * pnvFreq) + 1) * 0.5 * amp;
+        pnvFreq *= pnvLac;
+        amp *= pnvPers;
+    }
+	
+    heightValue = heightEvaluation[floor(pnv * evaluationLength)].r;
+	
+    baseGroundHeight += heightValue * pnvAmp;
+	
+    //baseGroundHeight += heightTexture[int2((int) (pnv * texWidth), 0)].b * pnvAmp;
+	
+	groundLevel += baseGroundHeight * groundVariance;
+	//groundLevel = abs(snoise((pos.xz + seedOffsetGround + chunkOffset.xz) * noiseFreq2)) * groundVariance + groundLevel;
+	
+	//noiseMask = (0.1 + ((snoise((pos.xz + chunkOffset.xz) * 0.001) + 1) * 0.5)) / 1.1;
+	//noiseMask = (0.25 + noiseMask) / 1.25;
+	//ceiling = (groundLevel + 5) + (ceiling) * noiseMask;
+	//ceilingVariance = ceilingVariance * noiseMask;
+	//ceilingBlend = 2 + ceilingBlend * noiseMask;
+	//groundBlend = 2 + groundBlend * noiseMask;
+	
+	//for (int j = 0; j < 4; ++j)
+	//{
+	//    groundLevel += (snoise((pos.xz + seedOffsetGround + chunkOffset.xz) * noiseFreqGround) + 1) * amp * groundVariance;
+	//    noiseFreqGround *= lacunarity;
+	//    amp *= persistence;
+	//}
+	
+	
+	ceiling += groundLevel + (snoise((pos.xz + seedOffsetCeiling + chunkOffset.xz) * noiseFreqCeiling) + 1) * 0.5 * ceilingVariance;;
+	
+	
+    amp = 0.5;
+	
+	
+	for (int m = 0; m < 10; ++m)
+	{
+	    ceiling += (snoise((pos.xz + seedOffsetCeiling + chunkOffset.xz) * noiseFreqCeiling) + 1) * amp * ceilingVariance;
+	    noiseFreqCeiling *= lacunarity;
+	    amp *= persistence;
+	}
+	//
+	////ceiling = (snoise((pos.xz + seedOffsetCeiling + chunkOffset.xz) * noiseFreq2) + 1) * 0.5 * ceilingVariance + ceiling + groundLevel;
+	////ceiling = (1 - abs(snoise((pos.xz + seedOffsetCeiling + chunkOffset.xz) * noiseFreq2 * 0.5))) * ceilingVariance + ceiling + groundLevel;
+	//
+    //if (pos.y + chunkOffset.y <= groundLevel + groundBlend)
+	//{
+	//	float difference = groundLevel + groundBlend - chunkOffset.y - pos.y + 2;
+	//	val = val - (difference / groundBlend) * (difference / groundBlend) * (difference / groundBlend);
+	//	if (val > 1)
+	//		val = 1;
+	//}
+    //else if (pos.y + chunkOffset.y >= ceiling - ceilingBlend)
+	//{
+	//	if (isCavernous)
+	//	{
+	//		float difference = pos.y + 2 - ceiling + ceilingBlend;
+	//		val = val - (difference / ceilingBlend) * (difference / ceilingBlend) * (difference / ceilingBlend);
+	//		if (val > 1)
+	//			val = 1;
+	//	}
+	//	else
+	//	{
+	//		float difference = pos.y + chunkOffset.y - ceiling + ceilingBlend + 2;
+	//		val = val + (difference / ceilingBlend) * (difference / ceilingBlend) * (difference / ceilingBlend);
+	//		if (val < -1)
+	//			val = -1;
+	//	}
+	//}
+	
+    int yPos = pos.y + chunkOffset.y;
+	
+    
+	
+    float squash = ((yPos - groundLevel) / (ceiling - groundLevel));
+	
+    if (yPos > groundLevel + (ceiling - groundLevel) * 0.5)
+    {
+        val = lerp(val, 1, smoothstep((yPos - (groundLevel + (ceiling - groundLevel) * 0.5)) / ((ceiling - groundLevel) * 0.5)));
+    }
+    if (yPos < groundLevel + (ceiling - groundLevel) * 0.5)
+    {
+        val = lerp(-1, val, smoothstep((yPos - groundLevel) / ((ceiling - groundLevel) * 0.5)));
+    }
+	
+	
+    if (yPos > ceiling)
+    {
+        val = 1;
+    }
+    if (yPos < groundLevel)
+    {
+        val = -1;
+    }
+	
+	
+	
+	
+	
+    int3 layerThickness = int3(48, 128, 172);
+	
+    float heightDifference = yPos - groundLevel;
+	
+    if (heightDifference > 0)
+    {
+        terrainType = 0.9;
+    }
+    else if (heightDifference > -layerThickness.r)
+    {
+		
+        if (heightDifference > -layerThickness.r + (layerThickness.r * 0.8))//heightDifference / -layerThickness > 0.95)
+        {
+            terrainType = lerp(0.7, 0.9, 1 - (heightDifference / -layerThickness.r) * 5);
+        }
+        else
+        {
+            terrainType = 0.7;
+        }
+    }
+    else if (heightDifference > -layerThickness.g)
+    {
+        if (heightDifference > -layerThickness.g + ((layerThickness.g - layerThickness.r) * 0.8))//heightDifference / -layerThickness > 0.95)
+        {
+            terrainType = lerp(0.3, 0.7, 1 - ((heightDifference + layerThickness.r) / (-layerThickness.g + layerThickness.r)) * 5);
+        }
+        else
+        {
+            terrainType = 0.3;
+        }
+    }
+    else if (heightDifference > -layerThickness.b)
+    {
+        terrainType = 0;
+    }
+    else
+    {
+        terrainType = 0;
+    }
+	
+	
+	
+	
+	
+	
+    float preDeformedValue = val;
+	
+	
+    uint numDeformations;
+    uint strideDeformations;
+    deformations.GetDimensions(numDeformations, strideDeformations);
+	
+    for (uint i = 0; i < numDeformations; i++)
+    {
+        if (i != 0)
+        {
+            float3 deformationPos = deformations[i].position;
+		
+		
+            float radius = deformations[i].radius;
+			
+            radius *= terrainType;
+			
+			
+			
+            float radiusNoise = 0;
+            amp = deformations[i].noiseAmp;
+            float radiusFreq = deformations[i].noiseFreq;
+            float radiusLac = deformations[i].noiseLac;
+            float radiusPers = deformations[i].noisePers;
+			
+            for (int j = 0; j < deformations[i].noiseOct; ++j)
+            {
+                radiusNoise += (snoise(((pos + chunkOffset) + deformationPos * 111.9715) * radiusFreq) + 1) * 0.5 * radius * amp;
+                radiusFreq *= radiusLac;
+                amp *= radiusPers;
+            }
+			
+            radius -= radiusNoise ;
+			
+			
+            float radiusBlend = deformations[i].blend;
+            radiusBlend *= 1.5 - (terrainType * 0.5);
+		
+            float dist = length(deformationPos - (pos + chunkOffset));
+			
+		
+            if (dist < radius)
+            {
+                if (dist < radius * (1 - radiusBlend))
+                {
+                    val = isoLevel + 0.02;
+                }
+                else
+                {
+                    float weight = 1.0 - ((dist - radius * (1 - radiusBlend)) / (radius * radiusBlend));
+				
+                    clamp(weight, 0.0, 1.0);
+				
+                    val = lerp(val, isoLevel + 0.02, weight);
+                }
+            }
+        }
+    }
+	
+	
+	
+	
+    float valueDifference = (preDeformedValue - val + 1);
+	
+    if (heightDifference > 0)
+    {
+        if (valueDifference > 0.95)
+        {
+            terrainType = lerp(0.9, 1.0, (valueDifference - 0.95) * 20);
+        }
+    }
+	
+    //if (preDeformedValue < isoLevel - 0.1)
+    //{
+    //    terrainType = 0.9;
+    //}
+    //else
+    //{
+    //    terrainType = lerp(1, 0.9, (isoLevel - preDeformedValue) * 10);
+    //}
+	// 
+    //if (preDeformedValue < isoLevel - 0.7)
+    //{
+    //    terrainType = 0.7;
+    //}
+    //else if (preDeformedValue < isoLevel - 0.6)
+    //{
+    //    terrainType = lerp(0.9, 0.7, ((isoLevel - 0.6) - preDeformedValue) * 10);
+    //}
+	
+    
+	
+	
+    uint empty = 0;
+	
+    if (pos.x == chunkSize - 1)
+	{
+		if (val <= isoLevel)
+		{
+			InterlockedCompareExchange(sides[0], 0, 1, empty);
+		}
+		else
+		{
+			InterlockedCompareExchange(sides[6], 0, 1, empty);
+		}
+		
+	}
+    else if (pos.x == 0)
+	{
+		if (val <= isoLevel)
+		{
+			InterlockedCompareExchange(sides[1], 0, 1, empty);
+		}
+		else
+		{
+			InterlockedCompareExchange(sides[7], 0, 1, empty);
+		}
+    }
+	if (pos.y == chunkSize - 1)
+	{
+		if (val <= isoLevel)
+		{
+			InterlockedCompareExchange(sides[2], 0, 1, empty);
+		}
+		else
+		{
+			InterlockedCompareExchange(sides[8], 0, 1, empty);
+		}
+	}
+    else if (pos.y == 0)
+	{
+		if (val <= isoLevel)
+		{
+			InterlockedCompareExchange(sides[3], 0, 1, empty);
+		}
+		else
+		{
+			InterlockedCompareExchange(sides[9], 0, 1, empty);
+		}
+    }
+    if (pos.z == chunkSize - 1)
+	{
+		if (val <= isoLevel)
+		{
+			InterlockedCompareExchange(sides[4], 0, 1, empty);
+		}
+		else
+		{
+			InterlockedCompareExchange(sides[10], 0, 1, empty);
+		}
+	}
+    else if (pos.z == 0)
+	{
+		if (val <= isoLevel)
+		{
+			InterlockedCompareExchange(sides[5], 0, 1, empty);
+		}
+		else
+		{
+			InterlockedCompareExchange(sides[11], 0, 1, empty);
+		}
+	}
+	
+    PointData pd;
+    pd.density = val;
+    pd.terrainType = terrainType;
+	
+    return pd;
+}
+
+[numthreads(8,8,8)]
+void NoiseGen (uint3 id : SV_DispatchThreadID)
+{
+	float value = 0.0;
+	
+	
+	
+	for (int i = 0; i < octaves; ++i)
+	{
+		value += snoise((float3(id.x, id.y, id.z) + chunkOffset + seedOffset) * noiseFreq) * amplitude;
+		noiseFreq *= lacunarity;
+		amplitude *= persistence;
+	}
+	
+	
+	
+    points[indexFromCoord(id.x, id.y, id.z)] = heightBlend(float3(id.x, id.y, id.z), value);
+	
+}
